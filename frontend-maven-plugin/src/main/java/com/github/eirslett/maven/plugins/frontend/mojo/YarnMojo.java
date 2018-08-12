@@ -3,11 +3,13 @@ package com.github.eirslett.maven.plugins.frontend.mojo;
 import java.io.File;
 import java.util.Collections;
 
+import com.github.eirslett.maven.plugins.frontend.lib.*;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.settings.Server;
 import org.apache.maven.settings.crypto.SettingsDecrypter;
 import org.sonatype.plexus.build.incremental.BuildContext;
 
@@ -15,7 +17,7 @@ import com.github.eirslett.maven.plugins.frontend.lib.FrontendPluginFactory;
 import com.github.eirslett.maven.plugins.frontend.lib.ProxyConfig;
 import com.github.eirslett.maven.plugins.frontend.lib.TaskRunnerException;
 
-@Mojo(name = "yarn", defaultPhase = LifecyclePhase.GENERATE_RESOURCES, threadSafe = true)
+@Mojo(name = "yarn", defaultPhase = LifecyclePhase.GENERATE_RESOURCES)
 public final class YarnMojo extends AbstractFrontendMojo {
 
     private static final String NPM_REGISTRY_URL = "npmRegistryURL";
@@ -35,6 +37,12 @@ public final class YarnMojo extends AbstractFrontendMojo {
      */
     @Parameter(property = NPM_REGISTRY_URL, required = false, defaultValue = "")
     private String npmRegistryURL;
+
+    /**
+     * Server Id for access to npm registry
+     */
+    @Parameter(property = "npmRegistryServerId", defaultValue = "")
+    private String npmRegistryServerId;
 
     @Parameter(property = "session", defaultValue = "${session}", readonly = true)
     private MavenSession session;
@@ -57,12 +65,13 @@ public final class YarnMojo extends AbstractFrontendMojo {
     }
 
     @Override
-    public synchronized void execute(FrontendPluginFactory factory) throws TaskRunnerException {
+    public void execute(FrontendPluginFactory factory) throws TaskRunnerException {
         File packageJson = new File(this.workingDirectory, "package.json");
         if (this.buildContext == null || this.buildContext.hasDelta(packageJson)
             || !this.buildContext.isIncremental()) {
             ProxyConfig proxyConfig = getProxyConfig();
-            factory.getYarnRunner(proxyConfig, getRegistryUrl()).execute(this.arguments,
+            NpmRegistryConfig registryConfig = getRegistryConfig();
+            factory.getYarnRunner(proxyConfig, registryConfig).execute(this.arguments,
                 this.environmentVariables);
         } else {
             getLog().info("Skipping yarn install as package.json unchanged");
@@ -78,8 +87,22 @@ public final class YarnMojo extends AbstractFrontendMojo {
         }
     }
 
-    private String getRegistryUrl() {
+    private NpmRegistryConfig getRegistryConfig() {
         // check to see if overridden via `-D`, otherwise fallback to pom value
-        return System.getProperty(NPM_REGISTRY_URL, this.npmRegistryURL);
+        final String registryURL = System.getProperty(NPM_REGISTRY_URL, npmRegistryURL);
+        if (null == registryURL || registryURL.isEmpty()) {
+            return null;
+        }
+
+        String username = null;
+        String password = null;
+        if (null != npmRegistryServerId && !npmRegistryServerId.isEmpty()) {
+            Server server = MojoUtils.decryptServer(npmRegistryServerId, session, decrypter);
+            if (null != server) {
+                username = server.getUsername();
+                password = server.getPassword();
+            }
+        }
+        return new NpmRegistryConfig(registryURL, username, password);
     }
 }
